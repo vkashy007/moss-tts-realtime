@@ -463,3 +463,49 @@ See **SGLANG_INTEGRATION_GUIDE.md** for:
 
 ---
 
+
+---
+
+## 🚀 **Qwen TTS 1.7B** (Newest Option - Highly Efficient)
+
+**Why Qwen?**
+- ✅ Only 1.7B parameters (vs 8B Tortoise)
+- ✅ Faster inference (2-3x realtime)
+- ✅ Excellent multilingual support
+- ✅ Voice cloning supported (verify with latest docs)
+- ✅ Production-ready quality
+- ✅ Alibaba backing
+
+### **Qwen Performance**
+
+| Metric | Value |
+|--------|-------|
+| VRAM | 6-8GB |
+| Setup Time | 20 min |
+| Generation Speed | 2-3x realtime |
+| TTFT | 300-500ms |
+| Voice Quality | ⭐⭐⭐⭐ |
+| Multilingual | ⭐⭐⭐⭐⭐ |
+
+### **Quick Integration**
+
+```bash
+# Install
+pip install torch torchaudio transformers accelerate
+
+# Download model
+python3 -c "from transformers import AutoModel; AutoModel.from_pretrained('Qwen/Qwen-Audio-1.7B')"
+
+# See QWEN_TTS_INTEGRATION_GUIDE.md for full integration
+```
+
+See **QWEN_TTS_INTEGRATION_GUIDE.md** for:
+- Complete setup guide
+- Direct integration code
+- SGLang integration for scale
+- Performance benchmarks
+- Voice cloning support
+- Docker deployment
+
+---
+
