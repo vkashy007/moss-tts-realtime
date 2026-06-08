@@ -260,7 +260,7 @@ class RealtimeTTSServer:
         logger.info("RealtimeTTSServer initialized")
 
     def _load_tts_models(self):
-        """Load MOSS-TTS models (1.7B + codec)."""
+        """Load MOSS-TTS models (1.7B + codec) with proper inference pipeline."""
         try:
             logger.info("Loading MOSS-TTS models...")
 
@@ -270,37 +270,57 @@ class RealtimeTTSServer:
             else:
                 self.device = torch.device("cuda:0")
 
-            # Load model and processor
+            # Add MOSS-TTS to path
+            import sys
+            sys.path.insert(0, '/home/vk/aiapps/tts/moss/moss_tts_realtime')
+
             from transformers import AutoModel, AutoTokenizer
-            from moss_tts_realtime import MossTTSRealtime, MossTTSRealtimeProcessor
+            from mossttsrealtime import MossTTSRealtime
+            from inferencer import MossTTSRealtimeInference, MossTTSRealtimeProcessor
 
             model_path = "OpenMOSS-Team/MOSS-TTS-Realtime"
             logger.info(f"Downloading {model_path}...")
 
-            # Load with optimizations
-            dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+            # Load model
+            dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float32
             self.model = MossTTSRealtime.from_pretrained(
                 model_path,
                 torch_dtype=dtype,
                 device_map="auto"
             )
             self.model.eval()
+            logger.info("✅ MOSS-TTS model loaded")
 
+            # Load tokenizer and processor
             tokenizer = AutoTokenizer.from_pretrained(model_path)
-            self.processor = MossTTSRealtimeProcessor(tokenizer)
+            processor = MossTTSRealtimeProcessor(tokenizer=tokenizer)
+            logger.info("✅ Processor loaded")
 
             # Load audio codec
             codec_path = "OpenMOSS-Team/MOSS-Audio-Tokenizer"
-            logger.info(f"Loading audio codec...")
-            self.codec = AutoModel.from_pretrained(codec_path, trust_remote_code=True).eval()
-            self.codec = self.codec.to(self.device)
+            logger.info("Loading audio codec...")
+            codec = AutoModel.from_pretrained(codec_path, trust_remote_code=True).eval()
+            codec = codec.to(self.device)
+            logger.info("✅ Codec loaded")
 
-            logger.info("✅ MOSS-TTS models loaded successfully")
+            # Create inference pipeline
+            self.inference = MossTTSRealtimeInference(
+                model=self.model,
+                tokenizer=tokenizer,
+                processor=processor,
+                codec=codec,
+                codec_sample_rate=24000
+            )
+
+            logger.info("✅ MOSS-TTS inference pipeline ready")
 
         except Exception as e:
             logger.error(f"Failed to load MOSS-TTS models: {e}")
+            import traceback
+            traceback.print_exc()
             logger.warning("Falling back to silence generation (demo mode)")
             self.model = None
+            self.inference = None
 
     async def start_session(self, request: StartSessionRequest) -> StartSessionResponse:
         """Start a new TTS session."""
@@ -362,7 +382,7 @@ class RealtimeTTSServer:
         session = self.sessions[session_id]
 
         try:
-            if self.model is None:
+            if self.model is None or self.inference is None:
                 logger.warning("MOSS-TTS model not loaded, generating silence")
                 # Fallback: generate silence
                 chunk_duration = 0.1
@@ -376,37 +396,47 @@ class RealtimeTTSServer:
                     await asyncio.sleep(chunk_duration * 0.5)
                 return
 
-            # Load voice reference
             voice_path = session.voice_sample.file_path
-            logger.info(f"Generating speech for voice: {session.voice_sample.voice_id}")
+            text = session.text_buffer.strip()
+            if not text:
+                text = "Hello, this is a test."
 
-            # Build conversation message with voice reference
-            conversation = [
-                self.processor.build_user_message(
-                    text=session.text_buffer,
-                    reference=[str(voice_path)],
-                    language="English"
+            logger.info(f"🎤 Generating speech for: {session.voice_sample.voice_id}")
+            logger.info(f"📝 Text: {text[:100]}...")
+
+            # Use the inference object's generate method directly with voice cloning
+            logger.info("🎯 Starting MOSS-TTS generation with voice cloning...")
+            with torch.no_grad():
+                generated_tokens = self.inference.generate(
+                    text=text,
+                    reference_audio_path=str(voice_path),
+                    max_length=2048,
+                    temperature=1.0,
+                    top_p=0.8,
+                    top_k=25,
+                    do_sample=True
                 )
-            ]
 
-            # Process input
-            batch = self.processor([conversation], mode="generation")
-            batch = {k: v.to(self.device) for k, v in batch.items()}
+            logger.info(f"✅ Audio tokens generated: {len(generated_tokens)} tokens")
 
-            # Generate audio tokens
-            logger.info("Generating audio tokens...")
-            outputs = self.model.generate(
-                **batch,
-                max_new_tokens=2048,
-                audio_temperature=1.0,
-                audio_top_p=0.8,
-                audio_top_k=25
-            )
+            # Decode tokens to waveform
+            logger.info("🔀 Decoding tokens to waveform...")
+            with torch.no_grad():
+                # generated_tokens should be a list of token arrays or a tensor
+                if isinstance(generated_tokens, list) and len(generated_tokens) > 0:
+                    audio_tokens = torch.tensor(generated_tokens[0], device=self.inference.device)
+                else:
+                    audio_tokens = generated_tokens
 
-            # Decode tokens to audio
-            logger.info("Decoding to waveform...")
-            audio = self.codec.decode(outputs[0].audio_tokens.cpu())
-            audio_np = audio.cpu().numpy()[0]
+                audio_waveform = self.inference.codec.decode(
+                    {"audio_codes": audio_tokens.unsqueeze(0).unsqueeze(0)}
+                )
+
+            audio_np = audio_waveform.cpu().numpy()
+            if audio_np.ndim > 1:
+                audio_np = audio_np[0]
+            if audio_np.ndim > 1:
+                audio_np = audio_np[0]
 
             # Stream in chunks
             chunk_duration = 0.1  # 100ms chunks
@@ -414,7 +444,7 @@ class RealtimeTTSServer:
             total_samples = len(audio_np)
             total_duration = total_samples / self.sample_rate
 
-            logger.info(f"Streaming {total_duration:.2f}s of audio")
+            logger.info(f"▶️ Streaming {total_duration:.2f}s of audio in 100ms chunks")
             session.total_audio_generated = total_duration
 
             for i in range(0, total_samples, chunk_samples):
@@ -422,8 +452,10 @@ class RealtimeTTSServer:
                 if len(chunk) == 0:
                     break
 
-                # Convert to int16
-                chunk_int16 = np.int16(chunk * 32767)
+                # Normalize and convert to int16
+                chunk_max = np.max(np.abs(chunk)) + 1e-6
+                chunk_normalized = chunk / chunk_max
+                chunk_int16 = np.int16(chunk_normalized * 32767)
 
                 # Write to buffer and yield
                 buffer = io.BytesIO()
@@ -435,8 +467,12 @@ class RealtimeTTSServer:
                 # Stream at realtime speed or faster
                 await asyncio.sleep(chunk_duration * 0.8)
 
+            logger.info(f"✅ Audio generation complete: {total_duration:.2f}s")
+
         except Exception as e:
-            logger.error(f"Error generating audio: {e}")
+            logger.error(f"❌ Error generating audio: {e}")
+            import traceback
+            traceback.print_exc()
             # Generate fallback silence on error
             chunk_samples = int(self.sample_rate * 0.1)
             chunk = np.zeros(chunk_samples, dtype=np.int16)
