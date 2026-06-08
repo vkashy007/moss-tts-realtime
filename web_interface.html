@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MOSS-TTS Real-time Streaming</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            max-width: 500px;
+            width: 100%;
+            padding: 40px;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            font-size: 28px;
+            color: #333;
+            margin-bottom: 5px;
+        }
+
+        .header p {
+            color: #999;
+            font-size: 14px;
+        }
+
+        .emoji {
+            font-size: 40px;
+            margin-bottom: 10px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #333;
+            font-size: 14px;
+        }
+
+        select, textarea {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-size: 14px;
+            font-family: inherit;
+            transition: all 0.3s ease;
+        }
+
+        select:focus, textarea:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        textarea {
+            resize: vertical;
+            min-height: 80px;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 30px;
+        }
+
+        button {
+            flex: 1;
+            padding: 12px 20px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .btn-generate {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-generate:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+
+        .btn-generate:active {
+            transform: translateY(0);
+        }
+
+        .btn-secondary {
+            background: #f0f0f0;
+            color: #333;
+        }
+
+        .btn-secondary:hover {
+            background: #e0e0e0;
+        }
+
+        .btn-generate:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .output {
+            margin-top: 30px;
+            padding: 20px;
+            background: #f8f9ff;
+            border-radius: 12px;
+            display: none;
+        }
+
+        .output.show {
+            display: block;
+        }
+
+        .status {
+            text-align: center;
+            font-size: 14px;
+            margin-bottom: 15px;
+            min-height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .status.success {
+            color: #10b981;
+        }
+
+        .status.error {
+            color: #ef4444;
+        }
+
+        .status.loading {
+            color: #667eea;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        audio {
+            width: 100%;
+            margin-top: 15px;
+            border-radius: 8px;
+        }
+
+        .voice-list {
+            max-height: 150px;
+            overflow-y: auto;
+            font-size: 13px;
+            color: #666;
+            line-height: 1.6;
+        }
+
+        .voice-item {
+            padding: 5px 0;
+            border-bottom: 1px solid #eee;
+        }
+
+        .voice-item:last-child {
+            border-bottom: none;
+        }
+
+        .voice-id {
+            font-weight: 600;
+            color: #333;
+        }
+
+        .connection-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px;
+            background: #f0f0f0;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            font-size: 13px;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+
+        .status-dot.connected {
+            background: #10b981;
+            animation: pulse 2s infinite;
+        }
+
+        .status-dot.disconnected {
+            background: #ef4444;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="emoji">🎤</div>
+            <h1>MOSS-TTS</h1>
+            <p>Real-time Voice Cloning</p>
+        </div>
+
+        <div class="connection-status">
+            <div class="status-dot disconnected" id="statusDot"></div>
+            <span id="statusText">Connecting...</span>
+        </div>
+
+        <div class="form-group">
+            <label for="voice">Select Voice 🎭</label>
+            <select id="voice">
+                <option value="">Loading voices...</option>
+            </select>
+        </div>
+
+        <div class="form-group">
+            <label for="text">Enter Text 📝</label>
+            <textarea id="text" placeholder="Type something you want to hear...">Hello! This is a test of real-time voice cloning with MOSS TTS.</textarea>
+        </div>
+
+        <div class="button-group">
+            <button class="btn-generate" id="generateBtn" onclick="generateAudio()">
+                🔊 Generate Audio
+            </button>
+            <button class="btn-secondary" onclick="listVoices()">
+                ℹ️ Info
+            </button>
+        </div>
+
+        <div class="output" id="output">
+            <div class="status" id="statusMessage"></div>
+            <div id="audioContainer"></div>
+            <div id="voiceInfo" class="voice-list"></div>
+        </div>
+    </div>
+
+    <script>
+        // Get server URL from window location or use default
+        const protocol = window.location.protocol;
+        const hostname = window.location.hostname;
+        const port = 8002;
+        const BASE_URL = `${protocol}//${hostname}:${port}`;
+
+        let currentSessionId = null;
+
+        // Initialize on page load
+        document.addEventListener('DOMContentLoaded', () => {
+            checkConnection();
+            loadVoices();
+            document.getElementById('text').focus();
+        });
+
+        // Check server connection
+        async function checkConnection() {
+            try {
+                const resp = await fetch(`${BASE_URL}/health`);
+                if (resp.ok) {
+                    updateConnectionStatus(true, 'Connected');
+                    return true;
+                }
+            } catch (error) {
+                updateConnectionStatus(false, 'Server unavailable');
+                return false;
+            }
+        }
+
+        function updateConnectionStatus(connected, message) {
+            const dot = document.getElementById('statusDot');
+            const text = document.getElementById('statusText');
+
+            if (connected) {
+                dot.className = 'status-dot connected';
+                text.textContent = '✓ ' + message;
+            } else {
+                dot.className = 'status-dot disconnected';
+                text.textContent = '✗ ' + message;
+            }
+
+            document.getElementById('generateBtn').disabled = !connected;
+        }
+
+        // Load available voices
+        async function loadVoices() {
+            try {
+                const resp = await fetch(`${BASE_URL}/voices`);
+                const data = await resp.json();
+                const voiceSelect = document.getElementById('voice');
+                voiceSelect.innerHTML = '';
+
+                data.voices.forEach(voice => {
+                    const option = document.createElement('option');
+                    option.value = voice.id;
+                    option.textContent = `${voice.name.toUpperCase()} (${voice.duration}s)`;
+                    voiceSelect.appendChild(option);
+                });
+
+                if (data.voices.length > 0) {
+                    voiceSelect.value = data.voices[0].id;
+                }
+            } catch (error) {
+                console.error('Failed to load voices:', error);
+            }
+        }
+
+        // Generate audio
+        async function generateAudio() {
+            const voice = document.getElementById('voice').value;
+            const text = document.getElementById('text').value;
+            const output = document.getElementById('output');
+            const statusMsg = document.getElementById('statusMessage');
+            const audioContainer = document.getElementById('audioContainer');
+            const btn = document.getElementById('generateBtn');
+
+            if (!voice) {
+                alert('Please select a voice');
+                return;
+            }
+
+            if (!text.trim()) {
+                alert('Please enter some text');
+                return;
+            }
+
+            // Show loading state
+            output.classList.add('show');
+            statusMsg.className = 'status loading';
+            statusMsg.innerHTML = '<div class="spinner"></div>Generating audio...';
+            audioContainer.innerHTML = '';
+            btn.disabled = true;
+
+            try {
+                // Start session
+                const startResp = await fetch(`${BASE_URL}/tts/session/start`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        voice_id: voice,
+                        language: 'en'
+                    })
+                });
+
+                if (!startResp.ok) throw new Error('Failed to start session');
+                const session = await startResp.json();
+                currentSessionId = session.session_id;
+
+                // Push text
+                const pushResp = await fetch(`${BASE_URL}/tts/session/${currentSessionId}/push`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text })
+                });
+
+                if (!pushResp.ok) throw new Error('Failed to push text');
+
+                // Get audio
+                statusMsg.innerHTML = '<div class="spinner"></div>Streaming audio...';
+                const audioResp = await fetch(`${BASE_URL}/tts/session/${currentSessionId}/audio`);
+
+                if (!audioResp.ok) throw new Error('Failed to stream audio');
+                const blob = await audioResp.blob();
+
+                // Create audio element
+                const audioUrl = URL.createObjectURL(blob);
+                const audio = document.createElement('audio');
+                audio.controls = true;
+                audio.src = audioUrl;
+                audioContainer.appendChild(audio);
+
+                // Auto-play
+                audio.play();
+
+                // Close session
+                await fetch(`${BASE_URL}/tts/session/${currentSessionId}/close`, {
+                    method: 'POST'
+                });
+
+                statusMsg.className = 'status success';
+                statusMsg.innerHTML = '✓ Audio generated successfully!';
+
+            } catch (error) {
+                statusMsg.className = 'status error';
+                statusMsg.innerHTML = `✗ Error: ${error.message}`;
+                console.error('Error:', error);
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        // List voices info
+        async function listVoices() {
+            const output = document.getElementById('output');
+            const voiceInfo = document.getElementById('voiceInfo');
+            const statusMsg = document.getElementById('statusMessage');
+
+            try {
+                const resp = await fetch(`${BASE_URL}/voices`);
+                const data = await resp.json();
+
+                let html = '<strong>Available Voices:</strong><br>';
+                data.voices.forEach(voice => {
+                    html += `<div class="voice-item">
+                        <span class="voice-id">${voice.name}</span>
+                        <span style="color: #999"> • ${voice.duration}s</span>
+                    </div>`;
+                });
+
+                voiceInfo.innerHTML = html;
+                output.classList.add('show');
+                statusMsg.innerHTML = '';
+                document.getElementById('audioContainer').innerHTML = '';
+
+            } catch (error) {
+                alert('Failed to load voice info: ' + error.message);
+            }
+        }
+
+        // Allow Enter key in textarea to submit
+        document.getElementById('text').addEventListener('keypress', (e) => {
+            if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                generateAudio();
+            }
+        });
+    </script>
+</body>
+</html>
